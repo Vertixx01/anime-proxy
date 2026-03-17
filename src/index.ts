@@ -366,10 +366,11 @@ app.get("/api/watch-order", async (c) => {
 });
 
 // ── Local dev server (Bun) ────────────────────────────────────────────────────
-const port = parseInt(Bun.env.PORT ?? "8080", 10);
-console.log(`🚀 Proxy alive on http://localhost:${port}`);
+const port = parseInt(process.env.PORT || "8080", 10);
+console.log(`🚀 Proxy alive on http://0.0.0.0:${port}`);
 
 export default {
     port,
+    hostname: "0.0.0.0",
     fetch: app.fetch,
 };
