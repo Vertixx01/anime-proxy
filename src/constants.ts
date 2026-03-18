@@ -43,6 +43,15 @@ export const BLACKLIST_HEADERS = [
     "content-length",
     "connection",
     "server",
+    "access-control-allow-origin",
+    "access-control-allow-methods",
+    "access-control-allow-headers",
+    "access-control-expose-headers",
+    "access-control-max-age",
+    "access-control-allow-credentials",
+    "cross-origin-resource-policy",
+    "cross-origin-embedder-policy",
+    "cross-origin-opener-policy",
 ];
 
 export const MEDIA_CACHE_CONTROL = "public, max-age=31536000, s-maxage=31536000, immutable";
