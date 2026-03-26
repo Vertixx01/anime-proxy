@@ -14,7 +14,7 @@ interface DomainGroup {
 
 export const DOMAIN_GROUPS: DomainGroup[] = [
     {
-    patterns: [/\.padorupado\.ru$/i, /\.kwikie\.ru$/i, /kwik\.cx$/i, /kwik\.si$/i, /kwik\.li$/i],
+    patterns: [/\.padorupado\.ru$/i, /\.kwikie\.ru$/i, /\.owocdn\.top$/i, /kwik\.cx$/i, /kwik\.si$/i, /kwik\.li$/i],
     origin: "https://kwik.cx",
     referer: "https://kwik.cx/",
     customHeaders: { "cache-control": "no-cache", pragma: "no-cache" },
