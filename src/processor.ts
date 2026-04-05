@@ -10,20 +10,14 @@ export function resolveUrl(line: string, base: URL): URL {
     }
 }
 
-export function buildProxyQuery(url: URL, originParam?: string, debugEnabled = false): string {
-    const params = new URLSearchParams({
-        url: url.href,
-    });
-
-    if (originParam) {
-        params.set("origin", originParam);
+export function buildProxyQuery(url: URL, originParam?: string, debugEnabled = false, encrypt?: (u: string) => string): string {
+    if (encrypt) {
+        return "u=" + encrypt(url.href);
     }
-
-    if (debugEnabled) {
-        params.set("debug", "1");
-    }
-
-    return params.toString();
+    let q = "url=" + encodeURIComponent(url.href);
+    if (originParam) q += "&origin=" + encodeURIComponent(originParam);
+    if (debugEnabled) q += "&debug=1";
+    return q;
 }
 
 export function extractManifestDebug(textBody: string) {
@@ -41,69 +35,85 @@ export function extractManifestDebug(textBody: string) {
     };
 }
 
+/**
+ * Parse a quoted-string attribute value from an HLS tag attribute list.
+ * Returns the raw (unquoted) value and the index just after the closing quote.
+ */
+function extractQuotedAttr(line: string, valueStart: number): [string, number] | null {
+    if (line[valueStart] !== '"') return null;
+    const closeQuote = line.indexOf('"', valueStart + 1);
+    if (closeQuote === -1) return null;
+    return [line.slice(valueStart + 1, closeQuote), closeQuote + 1];
+}
+
+/**
+ * Rewrite all URI="..." and URL="..." occurrences in an HLS attribute list,
+ * correctly skipping over quoted values that may contain commas.
+ */
+function rewriteUriAttrs(attrs: string, scrapeUrl: URL, originParam?: string, debugEnabled = false, encrypt?: (u: string) => string): string {
+    let result = "";
+    let i = 0;
+    while (i < attrs.length) {
+        const eqPos = attrs.indexOf("=", i);
+        if (eqPos === -1) { result += attrs.slice(i); break; }
+
+        const key = attrs.slice(i, eqPos);
+        const afterEq = eqPos + 1;
+
+        if ((key === "URI" || key === "URL") && attrs[afterEq] === '"') {
+            const parsed = extractQuotedAttr(attrs, afterEq);
+            if (parsed) {
+                const [value, afterClose] = parsed;
+                const resolved = resolveUrl(value, scrapeUrl);
+                const q = buildProxyQuery(resolved, originParam, debugEnabled, encrypt);
+                result += `${key}="?${q}"`;
+                i = afterClose;
+                continue;
+            }
+        }
+
+        // Not a URI/URL key — copy until next comma (or end), handling quoted values
+        if (attrs[afterEq] === '"') {
+            const parsed = extractQuotedAttr(attrs, afterEq);
+            if (parsed) {
+                const [, afterClose] = parsed;
+                result += attrs.slice(i, afterClose);
+                i = afterClose;
+                continue;
+            }
+        }
+
+        // Unquoted value — copy to next comma
+        const commaPos = attrs.indexOf(",", afterEq);
+        if (commaPos === -1) { result += attrs.slice(i); break; }
+        result += attrs.slice(i, commaPos + 1);
+        i = commaPos + 1;
+    }
+    return result;
+}
+
 export function processM3u8Line(
     line: string,
     scrapeUrl: URL,
     originParam?: string,
     debugEnabled = false,
+    encrypt?: (u: string) => string,
 ): string {
     if (line.length === 0) return "";
 
     if (line[0] === "#") {
-        if (line.startsWith("#EXT-X-KEY")) {
-            const uriStart = line.indexOf('URI="');
-            if (uriStart !== -1) {
-                const keyUriStart = uriStart + 5;
-                const quotePos = line.indexOf('"', keyUriStart);
-                if (quotePos !== -1) {
-                    const keyUri = line.slice(keyUriStart, quotePos);
-                    const resolved = resolveUrl(keyUri, scrapeUrl);
-                    const q = buildProxyQuery(resolved, originParam, debugEnabled);
-                    return `${line.slice(0, keyUriStart)}?${q}${line.slice(quotePos)}`;
-                }
-            }
-            return line;
-        }
-
-        if (line.startsWith('#EXT-X-MAP:URI="')) {
-            const innerUrl = line.slice(16, line.length - 1);
-            const resolved = resolveUrl(innerUrl, scrapeUrl);
-            const q = buildProxyQuery(resolved, originParam, debugEnabled);
-            return `#EXT-X-MAP:URI="?${q}"`;
-        }
-
-        if (line.length > 20 && (line.includes("URI=") || line.includes("URL="))) {
+        if (line.length > 20 && (line.includes('URI="') || line.includes('URL="'))) {
             const colonPos = line.indexOf(":");
             if (colonPos !== -1) {
                 const prefix = line.slice(0, colonPos + 1);
                 const attrs = line.slice(colonPos + 1);
-
-                const rewrittenAttrs = attrs.split(",").map((attr) => {
-                    const eqPos = attr.indexOf("=");
-                    if (eqPos === -1) return attr;
-
-                    const key = attr.slice(0, eqPos).trim();
-                    const value = attr
-                        .slice(eqPos + 1)
-                        .trim()
-                        .replace(/^"|"$/g, "");
-
-                    if (key === "URI" || key === "URL") {
-                        const resolved = resolveUrl(value, scrapeUrl);
-                        const q = buildProxyQuery(resolved, originParam, debugEnabled);
-                        return `${key}="?${q}"`;
-                    }
-                    return attr;
-                });
-
-                return prefix + rewrittenAttrs.join(",");
+                return prefix + rewriteUriAttrs(attrs, scrapeUrl, originParam, debugEnabled, encrypt);
             }
         }
-
         return line;
     }
 
     const resolved = resolveUrl(line, scrapeUrl);
-    const q = buildProxyQuery(resolved, originParam, debugEnabled);
+    const q = buildProxyQuery(resolved, originParam, debugEnabled, encrypt);
     return `?${q}`;
 }
