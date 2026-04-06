@@ -10,33 +10,12 @@ export function resolveUrl(line: string, base: URL): URL {
     }
 }
 
-export function buildProxyQuery(url: URL, debugEnabled = false, encrypt?: (u: string) => string): string {
-    if (encrypt) {
-        return "u=" + encrypt(url.href);
-    }
-    let q = "url=" + encodeURIComponent(url.href);
-    if (debugEnabled) q += "&debug=1";
-    return q;
-}
-
-export function extractManifestDebug(textBody: string) {
-    const lines = textBody.split("\n").map((line) => line.replace(/\r$/, ""));
-    const streamLines = lines.filter((line) => line.startsWith("#EXT-X-STREAM-INF"));
-    const codecs = streamLines
-        .map((line) => line.match(/CODECS="([^"]+)"/)?.[1] ?? null)
-        .filter((value): value is string => Boolean(value));
-
-    return {
-        lineCount: lines.length,
-        variantCount: streamLines.length,
-        codecs: [...new Set(codecs)].slice(0, 8),
-        preview: lines.filter((line) => line.startsWith("#EXT")).slice(0, 8),
-    };
+export function buildProxyPath(url: URL, encrypt: (u: string) => string): string {
+    return "/proxy/" + encrypt(url.href);
 }
 
 /**
  * Parse a quoted-string attribute value from an HLS tag attribute list.
- * Returns the raw (unquoted) value and the index just after the closing quote.
  */
 function extractQuotedAttr(line: string, valueStart: number): [string, number] | null {
     if (line[valueStart] !== '"') return null;
@@ -46,10 +25,9 @@ function extractQuotedAttr(line: string, valueStart: number): [string, number] |
 }
 
 /**
- * Rewrite all URI="..." and URL="..." occurrences in an HLS attribute list,
- * correctly skipping over quoted values that may contain commas.
+ * Rewrite all URI="..." and URL="..." occurrences in an HLS attribute list.
  */
-function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, encrypt?: (u: string) => string): string {
+function rewriteUriAttrs(attrs: string, scrapeUrl: URL, encrypt: (u: string) => string): string {
     let result = "";
     let i = 0;
     while (i < attrs.length) {
@@ -64,14 +42,12 @@ function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, en
             if (parsed) {
                 const [value, afterClose] = parsed;
                 const resolved = resolveUrl(value, scrapeUrl);
-                const q = buildProxyQuery(resolved, debugEnabled, encrypt);
-                result += `${key}="?${q}"`;
+                result += `${key}="${buildProxyPath(resolved, encrypt)}"`;
                 i = afterClose;
                 continue;
             }
         }
 
-        // Not a URI/URL key — copy until next comma (or end), handling quoted values
         if (attrs[afterEq] === '"') {
             const parsed = extractQuotedAttr(attrs, afterEq);
             if (parsed) {
@@ -82,7 +58,6 @@ function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, en
             }
         }
 
-        // Unquoted value — copy to next comma
         const commaPos = attrs.indexOf(",", afterEq);
         if (commaPos === -1) { result += attrs.slice(i); break; }
         result += attrs.slice(i, commaPos + 1);
@@ -94,9 +69,7 @@ function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, en
 export function processM3u8Line(
     line: string,
     scrapeUrl: URL,
-    _unused?: string,
-    debugEnabled = false,
-    encrypt?: (u: string) => string,
+    encrypt: (u: string) => string,
 ): string {
     if (line.length === 0) return "";
 
@@ -106,13 +79,12 @@ export function processM3u8Line(
             if (colonPos !== -1) {
                 const prefix = line.slice(0, colonPos + 1);
                 const attrs = line.slice(colonPos + 1);
-                return prefix + rewriteUriAttrs(attrs, scrapeUrl, debugEnabled, encrypt);
+                return prefix + rewriteUriAttrs(attrs, scrapeUrl, encrypt);
             }
         }
         return line;
     }
 
     const resolved = resolveUrl(line, scrapeUrl);
-    const q = buildProxyQuery(resolved, debugEnabled, encrypt);
-    return `?${q}`;
+    return buildProxyPath(resolved, encrypt);
 }
