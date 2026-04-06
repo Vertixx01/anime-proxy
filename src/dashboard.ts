@@ -1,4 +1,5 @@
 import { CORS_HEADERS } from "./constants";
+import type { RequestLogEntry, ActiveConnection } from "./activity";
 
 /**
  * Premium Dashboard & Help UI for the Proxy.
@@ -295,6 +296,268 @@ const DASHBOARD_HTML = `
             opacity: 1;
         }
 
+        /* ─── Live Activities ─────────────────────────────────── */
+        .activity-section {
+            margin-top: 2.5rem;
+        }
+
+        .activity-section h2 {
+            font-size: 2rem;
+            font-weight: 800;
+            background: var(--gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .active-conn-card {
+            background: var(--card-bg);
+            padding: 1.5rem 2rem;
+            border-radius: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            margin-bottom: 1.5rem;
+        }
+
+        .active-conn-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .active-conn-header h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .conn-count-badge {
+            background: var(--gradient);
+            color: white;
+            font-weight: 800;
+            font-size: 0.85rem;
+            padding: 0.3rem 0.9rem;
+            border-radius: 2rem;
+            min-width: 28px;
+            text-align: center;
+        }
+
+        .conn-list {
+            list-style: none;
+        }
+
+        .conn-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            font-size: 0.85rem;
+        }
+
+        .conn-item:last-child {
+            border-bottom: none;
+        }
+
+        .conn-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ff80;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #00ff80;
+            animation: pulse 1.5s infinite;
+            flex-shrink: 0;
+        }
+
+        .conn-url {
+            color: var(--text-dim);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.8rem;
+        }
+
+        .conn-elapsed {
+            color: var(--accent);
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .conn-method {
+            color: #7000ff;
+            font-weight: 700;
+            font-size: 0.75rem;
+            flex-shrink: 0;
+        }
+
+        .conn-empty {
+            color: var(--text-dim);
+            font-size: 0.85rem;
+            text-align: center;
+            padding: 1rem;
+            opacity: 0.6;
+        }
+
+        .activity-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .activity-card {
+            background: var(--card-bg);
+            padding: 1.5rem;
+            border-radius: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .activity-card h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        /* Request Log Table */
+        .req-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+        }
+
+        .req-table thead {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .req-table th {
+            background: rgba(0, 0, 0, 0.6);
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.6rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .req-table td {
+            padding: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            color: var(--text-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 280px;
+        }
+
+        .req-table-scroll {
+            max-height: 360px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+
+        .req-table-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .req-table-scroll::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 4px;
+        }
+
+        .status-2xx { color: #00ff80; font-weight: 700; }
+        .status-3xx { color: #ffbe00; font-weight: 700; }
+        .status-4xx { color: #ff8c00; font-weight: 700; }
+        .status-5xx { color: var(--accent); font-weight: 700; }
+
+        .req-method {
+            color: #7000ff;
+            font-weight: 700;
+            font-size: 0.75rem;
+        }
+
+        .req-latency {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.78rem;
+        }
+
+        .req-url-cell {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.78rem;
+        }
+
+        .req-empty {
+            color: var(--text-dim);
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.5;
+        }
+
+        /* Domain Breakdown */
+        .domain-list {
+            list-style: none;
+        }
+
+        .domain-item {
+            margin-bottom: 0.75rem;
+        }
+
+        .domain-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.3rem;
+            font-size: 0.82rem;
+        }
+
+        .domain-name {
+            color: var(--text-main);
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 150px;
+        }
+
+        .domain-count {
+            color: var(--text-dim);
+            font-size: 0.78rem;
+            flex-shrink: 0;
+        }
+
+        .domain-bar-bg {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .domain-bar-fill {
+            height: 100%;
+            background: var(--gradient);
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+
+        .domain-empty {
+            color: var(--text-dim);
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.5;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 768px) {
+            .activity-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         @media (max-width: 600px) {
             h1 { font-size: 2.5rem; }
             .container { padding: 2rem 1rem; }
@@ -351,6 +614,50 @@ const DASHBOARD_HTML = `
                 input.addEventListener('focus', () => input.style.borderColor = 'var(--accent)');
                 input.addEventListener('blur', () => input.style.borderColor = 'rgba(255,255,255,0.1)');
             </script>
+        </div>
+
+        <!-- ─── Live Activities ──────────────────────────────── -->
+        <div class="activity-section">
+            <h2>Live Activities</h2>
+
+            <div class="active-conn-card">
+                <div class="active-conn-header">
+                    <h3>Active Connections</h3>
+                    <div id="conn-badge" class="conn-count-badge">0</div>
+                </div>
+                <div id="active-connections" hx-get="/api/activity/active" hx-trigger="load, every 2s" hx-swap="innerHTML">
+                    <div class="conn-empty">No active connections</div>
+                </div>
+            </div>
+
+            <div class="activity-grid">
+                <div class="activity-card">
+                    <h3>Recent Requests</h3>
+                    <div class="req-table-scroll">
+                        <table class="req-table">
+                            <thead>
+                                <tr>
+                                    <th>Method</th>
+                                    <th>URL</th>
+                                    <th>Status</th>
+                                    <th>Latency</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="requests-body" hx-get="/api/activity/requests" hx-trigger="load, every 3s" hx-swap="innerHTML">
+                                <tr><td colspan="5" class="req-empty">No requests yet</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="activity-card">
+                    <h3>Top Domains</h3>
+                    <div id="domain-breakdown" hx-get="/api/activity/domains" hx-trigger="load, every 10s" hx-swap="innerHTML">
+                        <div class="domain-empty">No data yet</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="grid">
@@ -525,4 +832,84 @@ export function handleStatusBadge(status: string) {
             Status: ${status} (Bun)
         </div>
     `;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function escapeHtml(str: string): string {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function formatTimeAgo(timestamp: number): string {
+    const diff = Math.floor((Date.now() - timestamp) / 1000);
+    if (diff < 5) return "just now";
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+}
+
+function statusClass(status: number): string {
+    if (status >= 500) return "status-5xx";
+    if (status >= 400) return "status-4xx";
+    if (status >= 300) return "status-3xx";
+    return "status-2xx";
+}
+
+// ─── Live Activity Fragments ─────────────────────────────────────────────────
+
+export function handleRequestsFragment(requests: RequestLogEntry[]): string {
+    if (requests.length === 0) {
+        return `<tr><td colspan="5" class="req-empty">No requests yet</td></tr>`;
+    }
+
+    return requests.map((r) => `
+        <tr>
+            <td><span class="req-method">${escapeHtml(r.method)}</span></td>
+            <td class="req-url-cell" title="${escapeHtml(r.url)}">${escapeHtml(r.hostname)}${escapeHtml(r.url.replace(/^https?:\/\/[^/]+/, "").slice(0, 40))}</td>
+            <td><span class="${statusClass(r.status)}">${r.status}</span></td>
+            <td class="req-latency">${r.latency}ms</td>
+            <td>${formatTimeAgo(r.timestamp)}</td>
+        </tr>
+    `).join("");
+}
+
+export function handleActiveFragment(connections: (ActiveConnection & { elapsed: number })[]): string {
+    const badge = `<div id="conn-badge" class="conn-count-badge" hx-swap-oob="true">${connections.length}</div>`;
+
+    if (connections.length === 0) {
+        return `<div class="conn-empty">No active connections</div>${badge}`;
+    }
+
+    const items = connections.map((c) => `
+        <li class="conn-item">
+            <div class="conn-dot"></div>
+            <span class="conn-method">${escapeHtml(c.method)}</span>
+            <span class="conn-url" title="${escapeHtml(c.url)}">${escapeHtml(c.url)}</span>
+            <span class="conn-elapsed">${c.elapsed < 1000 ? c.elapsed + "ms" : (c.elapsed / 1000).toFixed(1) + "s"}</span>
+        </li>
+    `).join("");
+
+    return `<ul class="conn-list">${items}</ul>${badge}`;
+}
+
+export function handleDomainsFragment(domains: { hostname: string; count: number; percent: number }[]): string {
+    if (domains.length === 0) {
+        return `<div class="domain-empty">No data yet</div>`;
+    }
+
+    return `<ul class="domain-list">${domains.map((d) => `
+        <li class="domain-item">
+            <div class="domain-info">
+                <span class="domain-name" title="${escapeHtml(d.hostname)}">${escapeHtml(d.hostname)}</span>
+                <span class="domain-count">${d.count} req</span>
+            </div>
+            <div class="domain-bar-bg">
+                <div class="domain-bar-fill" style="width: ${d.percent}%"></div>
+            </div>
+        </li>
+    `).join("")}</ul>`;
 }

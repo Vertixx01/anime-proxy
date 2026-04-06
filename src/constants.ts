@@ -12,8 +12,14 @@ export const DEFAULT_HEADERS: Record<string, string> = {
     "sec-fetch-site": "cross-site",
 };
 
+export const ALLOWED_ORIGINS = new Set(
+    (process.env.ALLOWED_ORIGINS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+);
+
 export const CORS_HEADERS: Record<string, string> = {
-    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS, HEAD",
     "Access-Control-Allow-Headers":
         "Content-Type, Authorization, Range, X-Requested-With, Origin, Referer, Accept, Accept-Encoding, Accept-Language, Cache-Control, Pragma, Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site, Sec-Ch-Ua, Sec-Ch-Ua-Mobile, Sec-Ch-Ua-Platform, Connection",

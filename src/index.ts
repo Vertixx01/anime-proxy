@@ -4,12 +4,14 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import {
     CORS_HEADERS,
+    ALLOWED_ORIGINS,
     BLACKLIST_HEADERS,
     MEDIA_CACHE_CONTROL,
 } from "./constants";
 import { generateHeadersOriginal } from "./headers";
 import { buildProxyQuery, extractManifestDebug, processM3u8Line, resolveUrl } from "./processor";
-import { handleDashboard, handleStatsFragment, handleStatusBadge, formatUptime } from "./dashboard";
+import { handleDashboard, handleStatsFragment, handleStatusBadge, handleRequestsFragment, handleActiveFragment, handleDomainsFragment, formatUptime } from "./dashboard";
+import { trackRequestStart, trackRequestEnd, getRecentRequests, getActiveConnections, getDomainBreakdown } from "./activity";
 
 // ─── URL Decryption (XOR + base64url) ────────────────────────────────────────
 
@@ -45,21 +47,39 @@ export function encryptUrl(url: string): string {
 
 const app = new Hono();
 
+// ─── Dynamic CORS Origin ─────────────────────────────────────────────────────
+// Only origins listed in ALLOWED_ORIGINS env var get Access-Control-Allow-Origin.
+// If ALLOWED_ORIGINS is empty, allow all origins (open mode).
+app.use("*", async (c, next) => {
+    await next();
+    const origin = c.req.header("origin");
+    if (ALLOWED_ORIGINS.size === 0) {
+        c.header("Access-Control-Allow-Origin", "*");
+    } else if (origin && ALLOWED_ORIGINS.has(origin)) {
+        c.header("Access-Control-Allow-Origin", origin);
+    }
+});
+
 // Global performance tracker
 let requestCount = 0;
 let totalResponseTime = 0;
 const start_time = Date.now();
 // Lightweight metrics — only track proxy requests (skip dashboard/static endpoints)
 app.use("*", async (c, next) => {
-    const url = c.req.query("url") ?? c.req.query("u");
-    if (!url) {
+    const rawUrl = c.req.query("url");
+    const encUrl = c.req.query("u");
+    if (!rawUrl && !encUrl) {
         await next();
         return;
     }
+    const displayUrl = rawUrl ?? (encUrl ? (decryptUrl(encUrl) ?? encUrl) : "");
+    const connId = trackRequestStart(displayUrl, c.req.method);
     const start = performance.now();
     await next();
+    const latency = performance.now() - start;
     requestCount++;
-    totalResponseTime += (performance.now() - start);
+    totalResponseTime += latency;
+    trackRequestEnd(connId, c.res.status, latency);
 });
 
 // ─── Help & Info Endpoints (HTMX Enhanced) ────────────────────────────────────
@@ -89,6 +109,20 @@ app.get("/api/status", (c) => {
         }, 200, CORS_HEADERS);
     }
     return c.html(handleStatusBadge("FAST ASF"));
+});
+
+// ─── Live Activity Endpoints ─────────────────────────────────────────────────
+
+app.get("/api/activity/requests", (c) => {
+    return c.html(handleRequestsFragment(getRecentRequests()));
+});
+
+app.get("/api/activity/active", (c) => {
+    return c.html(handleActiveFragment(getActiveConnections()));
+});
+
+app.get("/api/activity/domains", (c) => {
+    return c.html(handleDomainsFragment(getDomainBreakdown()));
 });
 
 app.get("/api/info", (c) => {
@@ -208,8 +242,13 @@ app.all("*", async (c) => {
             return c.redirect(redirectUrl);
         }
 
-        // Root — return comprehensive API info
+        // Root — return comprehensive API info (requires ?pwd= if DASHBOARD_PWD is set)
         if (path === "/" || path === "/api" || path === "/api/") {
+            const dashPwd = process.env.DASHBOARD_PWD;
+            if (dashPwd && c.req.query("pwd") !== dashPwd) {
+                return c.json({ status: "Online" }, 200, CORS_HEADERS);
+            }
+
             const uptimeSeconds = Math.floor((Date.now() - start_time) / 1000);
             const avgLatency = requestCount > 0 ? (totalResponseTime / requestCount).toFixed(2) + "ms" : "0ms";
 
