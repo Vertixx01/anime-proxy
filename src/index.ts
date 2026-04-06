@@ -485,10 +485,9 @@ app.all("*", async (c) => {
 });
 
 const port = parseInt(process.env.PORT || "8080", 10);
-console.log(`🚀 Proxy alive on http://0.0.0.0:${port}`);
+console.log(`🚀 Proxy alive on http://localhost:${port}`);
 
 export default {
     port,
-    hostname: "0.0.0.0",
     fetch: app.fetch,
 };
