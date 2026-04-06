@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
-    "start": "bun run src/index.ts",
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
     "lint": "bun x eslint ."
   },
   "dependencies": {

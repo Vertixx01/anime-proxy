@@ -1,8 +1,8 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import {
-    CORS_HEADERS,
     ALLOWED_ORIGINS,
     BLACKLIST_HEADERS,
     MEDIA_CACHE_CONTROL,
@@ -42,34 +42,45 @@ export function encryptUrl(url: string): string {
         .replace(/=+$/, "");
 }
 
+const trustedOrigins = Array.from(ALLOWED_ORIGINS);
+
 const app = new Hono();
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
-app.use("*", async (c, next) => {
-    await next();
-    const origin = c.req.header("origin");
-    if (ALLOWED_ORIGINS.size === 0) {
-        c.header("Access-Control-Allow-Origin", "*");
-    } else if (origin && ALLOWED_ORIGINS.has(origin)) {
-        c.header("Access-Control-Allow-Origin", origin);
-    }
-});
-
-app.options("*", (c) => c.body(null, 204, CORS_HEADERS));
+app.use(
+    "*",
+    cors({
+        origin: trustedOrigins.length === 0 ? "*" : trustedOrigins,
+        allowHeaders: [
+            "Content-Type", "Authorization", "Range", "X-Requested-With",
+            "Origin", "Referer", "Accept", "Accept-Encoding", "Accept-Language",
+            "Cache-Control", "Pragma", "Sec-Fetch-Dest", "Sec-Fetch-Mode",
+            "Sec-Fetch-Site", "Sec-Ch-Ua", "Sec-Ch-Ua-Mobile", "Sec-Ch-Ua-Platform",
+            "Connection",
+        ],
+        allowMethods: ["GET", "POST", "OPTIONS", "HEAD"],
+        exposeHeaders: [
+            "Content-Length", "Content-Range", "Accept-Ranges", "Content-Type",
+            "Cache-Control", "Expires", "Vary", "ETag", "Last-Modified",
+        ],
+        maxAge: 86400,
+        credentials: true,
+    })
+);
 
 // ─── Root ────────────────────────────────────────────────────────────────────
-app.get("/", (c) => c.json({ status: "Online" }, 200, CORS_HEADERS));
+app.get("/", (c) => c.json({ status: "Online" }));
 
 // ─── Proxy ───────────────────────────────────────────────────────────────────
 app.all("/proxy/:encrypted", async (c) => {
     const method = c.req.method;
-    if (method !== "GET" && method !== "POST" && method !== "HEAD") return c.text("Method not allowed", 405, CORS_HEADERS);
+    if (method !== "GET" && method !== "POST" && method !== "HEAD") return c.text("Method not allowed", 405);
 
     const targetUrlRaw = decryptUrl(c.req.param("encrypted"));
-    if (!targetUrlRaw) return c.text("Invalid encrypted URL", 400, CORS_HEADERS);
+    if (!targetUrlRaw) return c.text("Invalid encrypted URL", 400);
 
     let targetUrl: URL;
-    try { targetUrl = new URL(targetUrlRaw); } catch { return c.text(`Invalid URL: ${targetUrlRaw}`, 400, CORS_HEADERS); }
+    try { targetUrl = new URL(targetUrlRaw); } catch { return c.text(`Invalid URL: ${targetUrlRaw}`, 400); }
 
     const upstreamHeaders = generateHeadersOriginal(targetUrl);
 
@@ -120,7 +131,7 @@ app.all("/proxy/:encrypted", async (c) => {
         clearTimeout(timeout);
     } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        return c.text(`Target Fetch Failed: ${errorMsg}`, 502, CORS_HEADERS);
+        return c.text(`Target Fetch Failed: ${errorMsg}`, 502);
     }
 
     // Handle 3xx Redirects
@@ -137,7 +148,7 @@ app.all("/proxy/:encrypted", async (c) => {
     const ext = dotIdx !== -1 ? pathname.slice(dotIdx + 1).toLowerCase() : "";
     const isMediaSegment = ext === "ts" || ext === "mp4" || ext === "m4s" || ext === "aac" || ext === "vtt" || ext === "webm";
 
-    const responseHeaders: Record<string, string> = Object.assign({}, CORS_HEADERS);
+    const responseHeaders: Record<string, string> = {};
     for (const [name, value] of upstream.headers.entries()) {
         if (!BLACKLIST_HEADERS.has(name)) { responseHeaders[name] = value; }
     }
@@ -173,17 +184,16 @@ app.all("/proxy/:encrypted", async (c) => {
             }
             return c.body(textBody, upstream.status as ContentfulStatusCode, responseHeaders);
         } catch {
-            return c.text("Manifest processing error", 500, CORS_HEADERS);
+            return c.text("Manifest processing error", 500);
         }
     }
 
     return c.body(upstream.body as ReadableStream, upstream.status as ContentfulStatusCode, responseHeaders);
 });
 
-const port = parseInt(process.env.PORT || "8080", 10);
-console.log(`Proxy alive on http://localhost:${port}`);
+export type AppType = typeof app;
 
 export default {
-    port,
+    port: Number(process.env.PORT) || 8000,
     fetch: app.fetch,
 };
