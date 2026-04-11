@@ -1,0 +1,7 @@
+[build]
+  command = "bun install"
+  publish = "public"
+
+[[edge_functions]]
+  function = "proxy"
+  path = "/*"
