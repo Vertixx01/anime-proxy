@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
+    "build": "bun build ./src/index.ts --outdir ./dist",
     "start": "bun run src/index.ts",
     "lint": "bun x eslint ."
   },

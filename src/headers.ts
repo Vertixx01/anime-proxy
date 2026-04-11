@@ -335,11 +335,6 @@ export const DOMAIN_GROUPS: DomainGroup[] = [
         referer: "https://vidlink.pro/",
     },
     {
-        patterns: [/sunnybreeze16\.live$/i],
-        origin: "https://megacloud.store",
-        referer: "https://megacloud.store/",
-    },
-    {
         patterns: [
             /heatwave90\.pro$/i,
             /humidmist27\.wiki$/i,

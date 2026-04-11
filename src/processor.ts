@@ -94,7 +94,6 @@ function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, en
 export function processM3u8Line(
     line: string,
     scrapeUrl: URL,
-    _unused?: string,
     debugEnabled = false,
     encrypt?: (u: string) => string,
 ): string {
