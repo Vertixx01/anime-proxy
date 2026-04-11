@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 
-import { ALLOWED_ORIGINS } from "./constants";
-import { decryptUrl } from "./crypto";
-import { trackRequestStart, trackRequestEnd } from "./activity";
-import { incrementMetrics } from "./metrics";
-import { registerEndpoints } from "./endpoints";
-import { registerProxy } from "./proxy";
+import { ALLOWED_ORIGINS } from "./constants.js";
+import { decryptUrl } from "./crypto.js";
+import { trackRequestStart, trackRequestEnd } from "./activity.js";
+import { incrementMetrics } from "./metrics.js";
+import { registerEndpoints } from "./endpoints.js";
+import { registerProxy } from "./proxy.js";
 
 const app = new Hono();
 

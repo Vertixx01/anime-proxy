@@ -1,5 +1,5 @@
-import { CORS_HEADERS } from "./constants";
-import type { RequestLogEntry, ActiveConnection } from "./activity";
+import { CORS_HEADERS } from "./constants.js";
+import type { RequestLogEntry, ActiveConnection } from "./activity.js";
 
 /**
  * Premium Dashboard & Help UI for the Proxy.

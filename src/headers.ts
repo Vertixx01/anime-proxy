@@ -1,4 +1,4 @@
-import { DEFAULT_HEADERS } from "./constants";
+import { DEFAULT_HEADERS } from "./constants.js";
 
 /** 
  * Domain-based header steering logic.

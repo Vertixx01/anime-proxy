@@ -11,12 +11,12 @@ import {
     CORS_HEADERS,
     BLACKLIST_HEADERS,
     MEDIA_CACHE_CONTROL,
-} from "./constants";
-import { generateHeadersOriginal } from "./headers";
-import { buildProxyQuery, extractManifestDebug, processM3u8Line, resolveUrl } from "./processor";
-import { encryptUrl, decryptUrl, XOR_KEY } from "./crypto";
-import { handleDashboard, formatUptime } from "./dashboard";
-import { START_TIME, getRequestCount, getAvgLatency } from "./metrics";
+} from "./constants.js";
+import { generateHeadersOriginal } from "./headers.js";
+import { buildProxyQuery, extractManifestDebug, processM3u8Line, resolveUrl } from "./processor.js";
+import { encryptUrl, decryptUrl, XOR_KEY } from "./crypto.js";
+import { handleDashboard, formatUptime } from "./dashboard.js";
+import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
 
 export function registerProxy(app: Hono) {
     app.all("*", async (c) => {

@@ -4,10 +4,10 @@
  */
 
 import type { Hono } from "hono";
-import { CORS_HEADERS } from "./constants";
-import { generateHeadersOriginal, DOMAIN_GROUPS } from "./headers";
-import { extractManifestDebug } from "./processor";
-import { encryptUrl, XOR_KEY } from "./crypto";
+import { CORS_HEADERS } from "./constants.js";
+import { generateHeadersOriginal, DOMAIN_GROUPS } from "./headers.js";
+import { extractManifestDebug } from "./processor.js";
+import { encryptUrl, XOR_KEY } from "./crypto.js";
 import {
     handleDashboard,
     handleStatsFragment,
@@ -16,9 +16,9 @@ import {
     handleActiveFragment,
     handleDomainsFragment,
     formatUptime,
-} from "./dashboard";
-import { getRecentRequests, getActiveConnections, getDomainBreakdown } from "./activity";
-import { START_TIME, getRequestCount, getAvgLatency } from "./metrics";
+} from "./dashboard.js";
+import { getRecentRequests, getActiveConnections, getDomainBreakdown } from "./activity.js";
+import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
 
 export function registerEndpoints(app: Hono) {
     // ─── Dashboard ───────────────────────────────────────────────────────────────
