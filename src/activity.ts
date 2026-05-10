@@ -7,8 +7,8 @@ export interface RequestLogEntry {
     hostname: string;
     method: string;
     status: number;
-    latency: number;         // ms
-    timestamp: number;       // wall clock
+    latency: number;         // ms, measured via performance.now()
+    timestamp: number;       // wall clock (Date.now())
 }
 
 export interface ActiveConnection {
@@ -19,14 +19,14 @@ export interface ActiveConnection {
     startTime: number;       // DOMHighResTimeStamp (performance.now())
 }
 
-// ─── Circular Buffer ─────
+// ─── Circular Buffer ─────────────────────────────────────────────────────────
 
 const LOG_CAPACITY = 50;
 const logBuffer: (RequestLogEntry | null)[] = new Array(LOG_CAPACITY).fill(null);
 let logHead = 0;
 let logCount = 0;
 
-// Wrapping ID counter  stays within safe integer range for indefinite runs
+// Wrapping ID counter – stays within safe integer range for indefinite runs
 let nextId = 1; // 1‑based
 function generateId(): number {
     const id = nextId;
@@ -51,12 +51,12 @@ export function getRecentRequests(): RequestLogEntry[] {
     return result;
 }
 
-// ─── Active Connections ────
+// ─── Active Connections ──────────────────────────────────────────────────────
 
 const activeConnections = new Map<number, ActiveConnection>();
-const STALE_TIMEOUT_MS = 30_000;
+const STALE_TIMEOUT_MS = 30_000; // 30 seconds
 
-// hostname extraction using the native URL parser
+// Battle-tested hostname extraction using the native URL parser
 function extractHostname(url: string): string {
     try {
         return new URL(url).hostname || "unknown";
@@ -74,18 +74,18 @@ export function trackRequestStart(url: string, method: string): number {
         url: url.length > 100 ? url.slice(0, 97) + "..." : url,
         hostname,
         method,
-        startTime: performance.now(), // monotonic, high-resolution (peak)
+        startTime: performance.now(), // monotonic, high-resolution
     });
     return id;
 }
 
-// Latency is now calculated
+// Latency is now calculated automatically – no external measurement required.
 export function trackRequestEnd(connId: number, status: number) {
     const conn = activeConnections.get(connId);
     activeConnections.delete(connId);
 
     if (conn) {
-        const latency = performance.now() - conn.startTime; // monotonic (cuz yes)
+        const latency = performance.now() - conn.startTime; // monotonic, no clock-jump issues
         pushLog({
             id: conn.id,
             url: conn.url,
@@ -115,7 +115,7 @@ export function getActiveConnections(): (ActiveConnection & { elapsed: number })
     }));
 }
 
-// ─── Domain Breakdown ────
+// ─── Domain Breakdown ────────────────────────────────────────────────────────
 
 const DOMAIN_CAP = 200;
 const domainCounts = new Map<string, number>();
@@ -126,7 +126,7 @@ function incrementDomain(hostname: string) {
     const current = domainCounts.get(hostname);
     domainCounts.set(hostname, (current ?? 0) + 1);
 
-    // Simple LFU eviction adequate for dashboard telemetry (200‑entry cap)
+    // Simple LFU eviction – adequate for dashboard telemetry (200‑entry cap)
     if (!current && domainCounts.size > DOMAIN_CAP) {
         let minKey = "";
         let minVal = Infinity;
@@ -140,7 +140,7 @@ function incrementDomain(hostname: string) {
     }
 }
 
-// Sorting O(n log n) – negligible at 200 domains if cap grows swap to a heap
+// Sorting O(n log n) – negligible at 200 domains; if cap grows, swap to a heap.
 export function getDomainBreakdown(limit = 10): { hostname: string; count: number; percent: number }[] {
     const entries = Array.from(domainCounts.entries())
         .sort((a, b) => b[1] - a[1])
@@ -152,4 +152,4 @@ export function getDomainBreakdown(limit = 10): { hostname: string; count: numbe
         count,
         percent: Math.round((count / total) * 100),
     }));
-            }
+}
