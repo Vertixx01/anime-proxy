@@ -1,10 +1,5 @@
 import { DEFAULT_HEADERS } from "./constants.js";
 
-/** 
- * Domain-based header steering logic.
- * Consolidated from Vercel and Bun templates.
- */
-
 interface DomainGroup {
     patterns: RegExp[];
     origin: string;
@@ -14,16 +9,16 @@ interface DomainGroup {
 
 export const DOMAIN_GROUPS: DomainGroup[] = [
     {
-    patterns: [/\.padorupado\.ru$/i, /\.kwikie\.ru$/i, /kwik\.cx$/i, /kwik\.si$/i, /kwik\.li$/i],
-    origin: "https://kwik.cx",
-    referer: "https://kwik.cx/",
-    customHeaders: { "cache-control": "no-cache", pragma: "no-cache" },
-},
-{
-    patterns: [/animepahe\.(?:com|org|ru|si)$/i, /i\.animepahe\.(?:com|org|ru|si)$/i],
-    origin: "https://animepahe.si",
-    referer: "https://animepahe.si/",
-},
+        patterns: [/\.padorupado\.ru$/i, /\.kwikie\.ru$/i, /kwik\.cx$/i, /kwik\.si$/i, /kwik\.li$/i],
+        origin: "https://kwik.cx",
+        referer: "https://kwik.cx/",
+        customHeaders: { "cache-control": "no-cache", pragma: "no-cache" },
+    },
+    {
+        patterns: [/animepahe\.(?:com|org|ru|si)$/i, /i\.animepahe\.(?:com|org|ru|si)$/i],
+        origin: "https://animepahe.si",
+        referer: "https://animepahe.si/",
+    },
     {
         patterns: [/\.streamtape\.to$/i],
         origin: "https://streamtape.to",
@@ -116,11 +111,7 @@ export const DOMAIN_GROUPS: DomainGroup[] = [
         referer: "https://anime.uniquestream.net/",
     },
     {
-        patterns: [
-            /\.raffaellocdn\.net$/i,
-            /\.feetcdn\.com$/i,
-            /clearskydrift45\.site$/i,
-        ],
+        patterns: [/\.raffaellocdn\.net$/i, /\.feetcdn\.com$/i, /clearskydrift45\.site$/i],
         origin: "https://kerolaunochan.online",
         referer: "https://kerolaunochan.online/",
     },
@@ -321,11 +312,7 @@ export const DOMAIN_GROUPS: DomainGroup[] = [
         referer: "https://edgedeliverynetwork.org/",
     },
     {
-        patterns: [
-            /lightningbolts\.ru$/i,
-            /lightningbolt\.site$/i,
-            /vyebzzqlojvrl\.top$/i,
-        ],
+        patterns: [/lightningbolts\.ru$/i, /lightningbolt\.site$/i, /vyebzzqlojvrl\.top$/i],
         origin: "https://vidsrc.cc",
         referer: "https://vidsrc.cc/",
     },
@@ -378,20 +365,22 @@ export const DOMAIN_GROUPS: DomainGroup[] = [
     },
 ];
 
-// LRU-style cache for hostname -> domain group lookups (avoids regex scan per request)
 const domainGroupCache = new Map<string, DomainGroup | null>();
 const CACHE_MAX = 1024;
 
 function findDomainGroup(hostname: string): DomainGroup | null {
-    const cached = domainGroupCache.get(hostname);
-    if (cached !== undefined) return cached;
+    if (domainGroupCache.has(hostname)) {
+        const group = domainGroupCache.get(hostname)!;
+        // move to end (most recently used)
+        domainGroupCache.delete(hostname);
+        domainGroupCache.set(hostname, group);
+        return group;
+    }
 
-    const group = DOMAIN_GROUPS.find((g) =>
-        g.patterns.some((re) => re.test(hostname))
-    ) ?? null;
+    const group =
+        DOMAIN_GROUPS.find((g) => g.patterns.some((re) => re.test(hostname))) ?? null;
 
     if (domainGroupCache.size >= CACHE_MAX) {
-        // Evict oldest entry
         const first = domainGroupCache.keys().next().value;
         if (first !== undefined) domainGroupCache.delete(first);
     }
@@ -399,13 +388,13 @@ function findDomainGroup(hostname: string): DomainGroup | null {
     return group;
 }
 
-export function generateHeadersOriginal(
-    url: URL,
-): Record<string, string> {
-    const headers = Object.assign(Object.create(null), DEFAULT_HEADERS) as Record<string, string>;
+export function generateHeadersOriginal(url: URL): Record<string, string> {
+    const headers: Record<string, string> = Object.assign(
+        Object.create(null),
+        DEFAULT_HEADERS
+    );
 
     const group = findDomainGroup(url.hostname);
-
     if (group) {
         headers["origin"] = group.origin;
         headers["referer"] = group.referer;
