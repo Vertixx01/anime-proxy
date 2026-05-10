@@ -34,10 +34,6 @@ export function extractManifestDebug(textBody: string) {
     };
 }
 
-/**
- * Parse a quoted-string attribute value from an HLS tag attribute list.
- * Returns the raw (unquoted) value and the index just after the closing quote.
- */
 function extractQuotedAttr(line: string, valueStart: number): [string, number] | null {
     if (line[valueStart] !== '"') return null;
     const closeQuote = line.indexOf('"', valueStart + 1);
@@ -45,49 +41,51 @@ function extractQuotedAttr(line: string, valueStart: number): [string, number] |
     return [line.slice(valueStart + 1, closeQuote), closeQuote + 1];
 }
 
-/**
- * Rewrite all URI="..." and URL="..." occurrences in an HLS attribute list,
- * correctly skipping over quoted values that may contain commas.
- */
 function rewriteUriAttrs(attrs: string, scrapeUrl: URL, debugEnabled = false, encrypt?: (u: string) => string): string {
     let result = "";
     let i = 0;
+
     while (i < attrs.length) {
         const eqPos = attrs.indexOf("=", i);
-        if (eqPos === -1) { result += attrs.slice(i); break; }
+        if (eqPos === -1) {
+            result += attrs.slice(i);
+            break;
+        }
 
-        const key = attrs.slice(i, eqPos);
+        const key = attrs.slice(i, eqPos).trim();
         const afterEq = eqPos + 1;
 
-        if ((key === "URI" || key === "URL") && attrs[afterEq] === '"') {
+        if (attrs[afterEq] === '"') {
             const parsed = extractQuotedAttr(attrs, afterEq);
-            if (parsed) {
-                const [value, afterClose] = parsed;
+            if (!parsed) break;
+            const [value, afterClose] = parsed;
+
+            if (key === "URI" || key === "URL") {
                 const resolved = resolveUrl(value, scrapeUrl);
                 const q = buildProxyQuery(resolved, debugEnabled, encrypt);
                 result += `${key}="?${q}"`;
-                i = afterClose;
-                continue;
-            }
-        }
-
-        // Not a URI/URL key — copy until next comma (or end), handling quoted values
-        if (attrs[afterEq] === '"') {
-            const parsed = extractQuotedAttr(attrs, afterEq);
-            if (parsed) {
-                const [, afterClose] = parsed;
+            } else {
                 result += attrs.slice(i, afterClose);
-                i = afterClose;
-                continue;
             }
+
+            if (afterClose < attrs.length && attrs[afterClose] === ',') {
+                result += ',';
+                i = afterClose + 1;
+            } else {
+                i = afterClose;
+            }
+            continue;
         }
 
-        // Unquoted value — copy to next comma
         const commaPos = attrs.indexOf(",", afterEq);
-        if (commaPos === -1) { result += attrs.slice(i); break; }
+        if (commaPos === -1) {
+            result += attrs.slice(i);
+            break;
+        }
         result += attrs.slice(i, commaPos + 1);
         i = commaPos + 1;
     }
+
     return result;
 }
 
@@ -100,7 +98,7 @@ export function processM3u8Line(
     if (line.length === 0) return "";
 
     if (line[0] === "#") {
-        if (line.length > 20 && (line.includes('URI="') || line.includes('URL="'))) {
+        if (/(URI|URL)\s*=\s*"/.test(line)) {
             const colonPos = line.indexOf(":");
             if (colonPos !== -1) {
                 const prefix = line.slice(0, colonPos + 1);
