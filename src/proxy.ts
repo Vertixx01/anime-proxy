@@ -1,12 +1,6 @@
-/**
- * Main proxy catch-all handler.
- * Must be registered LAST so named API routes take priority.
- */
-
 import type { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-
 import {
     CORS_HEADERS,
     BLACKLIST_HEADERS,
@@ -21,30 +15,31 @@ import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
 export function registerProxy(app: Hono) {
     app.all("*", async (c) => {
         const method = c.req.method;
-        if (method !== "GET" && method !== "POST" && method !== "HEAD") return c.text("Method not allowed", 405, CORS_HEADERS);
+        if (method !== "GET" && method !== "POST" && method !== "HEAD") {
+            return c.text("Method not allowed", 405, CORS_HEADERS);
+        }
 
-        const targetUrlRaw = c.req.query("url") ?? (c.req.query("u") ? decryptUrl(c.req.query("u")!) : null);
+        const targetUrlRaw =
+            c.req.query("url") ??
+            (c.req.query("u") ? decryptUrl(c.req.query("u")!) : null);
+
         const dashboardParam = c.req.query("dashboard");
-
-        // Explicit dashboard request
         if (dashboardParam === "true" || dashboardParam === "1") {
             return handleDashboard(c);
         }
 
-        // Handle dashboard / info at root
         if (!targetUrlRaw) {
             const path = c.req.path;
-
-            // Relative redirection recovery
             const lastHost = getCookie(c, "_last_requested");
             if (lastHost && path !== "/" && path !== "/api" && path !== "/api/") {
                 const remainingPath = path.startsWith("/api") ? path.slice(4) : path;
-                const redirectTarget = new URL(lastHost + (remainingPath.startsWith("/") ? "" : "/") + remainingPath);
+                const redirectTarget = new URL(
+                    lastHost + (remainingPath.startsWith("/") ? "" : "/") + remainingPath
+                );
                 const redirectUrl = `/?${buildProxyQuery(redirectTarget, c.req.query("debug") === "1")}`;
                 return c.redirect(redirectUrl);
             }
 
-            // Root — return comprehensive API info (requires ?pwd= if DASHBOARD_PWD is set)
             if (path === "/" || path === "/api" || path === "/api/") {
                 const dashPwd = process.env.DASHBOARD_PWD;
                 if (dashPwd && c.req.query("pwd") !== dashPwd) {
@@ -52,7 +47,8 @@ export function registerProxy(app: Hono) {
                 }
 
                 const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
-                const avgLatency = getRequestCount() > 0 ? getAvgLatency().toFixed(2) + "ms" : "0ms";
+                const avgLatency =
+                    getRequestCount() > 0 ? getAvgLatency().toFixed(2) + "ms" : "0ms";
 
                 return c.json({
                     name: "Anime Proxy",
@@ -126,21 +122,20 @@ export function registerProxy(app: Hono) {
                     },
                 }, 200, CORS_HEADERS);
             }
-
             return c.text("Missing URL parameter. Usage: /?url=<ENCODED_URL>", 400, CORS_HEADERS);
         }
 
-        // ─── Proxy Logic ─────────────────────────────────────────────────────────
-
         let targetUrl: URL;
-        try { targetUrl = new URL(targetUrlRaw); } catch { return c.text(`Invalid URL: ${targetUrlRaw}`, 400, CORS_HEADERS); }
+        try {
+            targetUrl = new URL(targetUrlRaw);
+        } catch {
+            return c.text(`Invalid URL: ${targetUrlRaw}`, 400, CORS_HEADERS);
+        }
 
         const debugEnabled = c.req.query("debug") === "1";
-
         const upstreamHeaders = generateHeadersOriginal(targetUrl);
-
-        // Forward Range and standard headers
         const clientHeaders = c.req.raw.headers;
+
         const rangeVal = clientHeaders.get("range");
         if (rangeVal) upstreamHeaders["range"] = rangeVal;
         const ifRangeVal = clientHeaders.get("if-range");
@@ -156,11 +151,12 @@ export function registerProxy(app: Hono) {
                 const parsed = JSON.parse(headersParam);
                 for (const [k, v] of Object.entries(parsed)) {
                     const key = k.toLowerCase();
-                    // Never let the client override origin/referer — domain group logic owns those
                     if (key === "origin" || key === "referer") continue;
                     upstreamHeaders[key] = String(v);
                 }
-            } catch { /* ignore */ }
+            } catch {
+                // ignore malformed header JSON
+            }
         }
 
         let body: any = null;
@@ -197,31 +193,41 @@ export function registerProxy(app: Hono) {
             return c.text(`Target Fetch Failed: ${errorMsg}`, 502, CORS_HEADERS);
         }
 
-        // Handle 3xx Redirects before any other work
         if (upstream.status >= 300 && upstream.status < 400) {
             const location = upstream.headers.get("location");
             if (location) {
                 const resolvedLocation = resolveUrl(location, targetUrl);
-                const q = buildProxyQuery(resolvedLocation, debugEnabled, XOR_KEY ? encryptUrl : undefined);
+                const q = buildProxyQuery(
+                    resolvedLocation,
+                    debugEnabled,
+                    XOR_KEY ? encryptUrl : undefined
+                );
                 return c.redirect(`/?${q}`, upstream.status as any);
             }
         }
 
-        // Set cookie for relative redirection recovery (only needed for manifest/html responses, skip segments)
         const pathname = targetUrl.pathname;
         const dotIdx = pathname.lastIndexOf(".");
         const ext = dotIdx !== -1 ? pathname.slice(dotIdx + 1).toLowerCase() : "";
-        const isMediaSegment = ext === "ts" || ext === "mp4" || ext === "m4s" || ext === "aac" || ext === "vtt" || ext === "webm";
+        const isMediaSegment = ["ts", "mp4", "m4s", "aac", "vtt", "webm"].includes(ext);
 
         if (!isMediaSegment) {
-            const urlBase = `${targetUrl.protocol}//${targetUrl.host}${pathname.substring(0, pathname.lastIndexOf("/"))}`;
-            setCookie(c, "_last_requested", urlBase, { maxAge: 3600, httpOnly: true, path: "/", sameSite: "Lax" });
+            const lastSlash = pathname.lastIndexOf("/");
+            const basePath = lastSlash !== -1 ? pathname.substring(0, lastSlash) : "";
+            const urlBase = `${targetUrl.protocol}//${targetUrl.host}${basePath}`;
+            setCookie(c, "_last_requested", urlBase, {
+                maxAge: 3600,
+                httpOnly: true,
+                path: "/",
+                sameSite: "Lax",
+            });
         }
 
-        const responseHeaders: Record<string, string> = Object.assign({}, CORS_HEADERS);
+        const responseHeaders: Record<string, string> = { ...CORS_HEADERS };
         for (const [name, value] of upstream.headers.entries()) {
-            // Header names from fetch are already lowercase in Bun — skip redundant .toLowerCase()
-            if (!BLACKLIST_HEADERS.has(name)) { responseHeaders[name] = value; }
+            if (!BLACKLIST_HEADERS.has(name)) {
+                responseHeaders[name] = value;
+            }
         }
 
         if (isMediaSegment) {
@@ -229,7 +235,10 @@ export function registerProxy(app: Hono) {
         }
 
         const contentType = upstream.headers.get("content-type") ?? "";
-        const isM3u8 = contentType.includes("mpegurl") || pathname.endsWith(".m3u8") || pathname.endsWith(".M3U8");
+        const isM3u8 =
+            contentType.includes("mpegurl") ||
+            pathname.endsWith(".m3u8") ||
+            pathname.endsWith(".M3U8");
 
         if (isM3u8) {
             try {
@@ -241,7 +250,6 @@ export function registerProxy(app: Hono) {
                 if (textBody.trimStart().startsWith("#EXTM3U")) {
                     const debugInfo = debugEnabled ? extractManifestDebug(textBody) : null;
 
-                    // Build rewritten manifest in one pass without intermediate array
                     let rewritten = "";
                     let start = 0;
                     const len = textBody.length;
@@ -250,25 +258,44 @@ export function registerProxy(app: Hono) {
                         if (end === -1) end = len;
                         const lineEnd = end > start && textBody[end - 1] === "\r" ? end - 1 : end;
                         if (rewritten.length > 0) rewritten += "\n";
-                        rewritten += processM3u8Line(textBody.slice(start, lineEnd), targetUrl, debugEnabled, XOR_KEY ? encryptUrl : undefined);
+                        rewritten += processM3u8Line(
+                            textBody.slice(start, lineEnd),
+                            targetUrl,
+                            debugEnabled,
+                            XOR_KEY ? encryptUrl : undefined
+                        );
                         start = end + 1;
                     }
 
                     if (debugEnabled && debugInfo) {
                         responseHeaders["X-Proxy-Debug-Upstream"] = targetUrl.href.slice(0, 200);
                         responseHeaders["X-Proxy-Debug-Variants"] = String(debugInfo.variantCount);
-                        responseHeaders["X-Proxy-Debug-Codecs"] = debugInfo.codecs.join(" | ").slice(0, 200);
+                        responseHeaders["X-Proxy-Debug-Codecs"] = debugInfo.codecs
+                            .join(" | ")
+                            .slice(0, 200);
                     }
-                    return c.body(rewritten, upstream.status as ContentfulStatusCode, { ...responseHeaders, "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "no-cache, no-store, must-revalidate" });
+                    return c.body(
+                        rewritten,
+                        upstream.status as ContentfulStatusCode,
+                        {
+                            ...responseHeaders,
+                            "Content-Type": "application/vnd.apple.mpegurl",
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                        }
+                    );
                 }
-                // If it claimed to be m3u8 but isn't, return as is
+
                 return c.body(textBody, upstream.status as ContentfulStatusCode, responseHeaders);
             } catch (err) {
-                console.error(`[Proxy Error] M3U8 split/process failed:`, err);
+                console.error(`[Proxy Error] M3U8 processing failed:`, err);
                 return c.text("Manifest processing error", 500, CORS_HEADERS);
             }
         }
 
-        return c.body(upstream.body as ReadableStream, upstream.status as ContentfulStatusCode, responseHeaders);
+        return c.body(
+            upstream.body as ReadableStream,
+            upstream.status as ContentfulStatusCode,
+            responseHeaders
+        );
     });
-}
+                            }
