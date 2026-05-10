@@ -1,13 +1,46 @@
 import { CORS_HEADERS } from "./constants.js";
 import type { RequestLogEntry, ActiveConnection } from "./activity.js";
 
-/**
- * Premium Dashboard & Help UI for the Proxy.
- * Uses HTMX (htmlx) for real-time, low-latency status updates.
- */
+// ─── Helper utils ──────────────────────────────────────────────────────────
+function escapeHtml(str: string): string {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
 
-const DASHBOARD_HTML = `
-<!DOCTYPE html>
+function formatTimeAgo(timestamp: number): string {
+    const diff = Math.floor((Date.now() - timestamp) / 1000);
+    if (diff < 5) return "just now";
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+}
+
+function statusClass(status: number): string {
+    if (status >= 500) return "status-5xx";
+    if (status >= 400) return "status-4xx";
+    if (status >= 300) return "status-3xx";
+    return "status-2xx";
+}
+
+// Strip scheme, userinfo, and port – keep only hostname + path for display.
+function displayUrlSnippet(url: string): string {
+    try {
+        const u = new URL(url);
+        // reconstruct without userinfo and with a short path
+        return u.hostname + (u.pathname.length > 40 ? u.pathname.slice(0, 40) : u.pathname);
+    } catch {
+        // fallback for malformed URLs
+        const hostEnd = url.indexOf("/", url.indexOf("://") + 3);
+        return url.slice(0, hostEnd !== -1 ? hostEnd : url.length);
+    }
+}
+
+// ─── Dashboard HTML ────────────────────────────────────────────────────────
+const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -48,7 +81,6 @@ const DASHBOARD_HTML = `
             z-index: 1;
         }
 
-        /* Glassmorphism background elements */
         body::before {
             content: '';
             position: absolute;
@@ -296,7 +328,6 @@ const DASHBOARD_HTML = `
             opacity: 1;
         }
 
-        /* ─── Live Activities ─────────────────────────────────── */
         .activity-section {
             margin-top: 2.5rem;
         }
@@ -420,7 +451,6 @@ const DASHBOARD_HTML = `
             margin-bottom: 1rem;
         }
 
-        /* Request Log Table */
         .req-table {
             width: 100%;
             border-collapse: collapse;
@@ -499,7 +529,6 @@ const DASHBOARD_HTML = `
             opacity: 0.5;
         }
 
-        /* Domain Breakdown */
         .domain-list {
             list-style: none;
         }
@@ -576,7 +605,6 @@ const DASHBOARD_HTML = `
         </header>
 
         <div id="stats-container" class="stats-strip" hx-get="/api/stats" hx-trigger="load, every 10s">
-            <!-- HTMX will load stats here -->
             <div class="stat-item">
                 <span class="stat-value">...</span>
                 <span class="stat-label">Requests</span>
@@ -591,7 +619,7 @@ const DASHBOARD_HTML = `
             </div>
         </div>
 
-        <div class="card" style="grid-column: 1 / -1; background: linear-gradient(rgba(18, 18, 30, 0.8), rgba(18, 18, 30, 0.8)), url('https://i.pinimg.com/originals/7e/e3/3e/7ee33e07e6794f7db4e785a5fe731f04.gif'); background-size: cover; background-position: center;">
+        <div class="card" style="grid-column: 1 / -1; background: linear-gradient(135deg, rgba(18,18,30,0.9) 0%, rgba(40,10,60,0.9) 100%);">
             <h2>Quick Proxy Search</h2>
             <p>Paste a manifest or media URL below to stream it instantly through the proxy.</p>
             <form id="proxy-form" style="display: flex; gap: 10px; margin-top: 1.5rem;">
@@ -609,14 +637,12 @@ const DASHBOARD_HTML = `
                         window.location.href = '/?url=' + encodeURIComponent(url);
                     }
                 });
-                // Focus styling
                 const input = document.getElementById('proxy-url');
                 input.addEventListener('focus', () => input.style.borderColor = 'var(--accent)');
                 input.addEventListener('blur', () => input.style.borderColor = 'rgba(255,255,255,0.1)');
             </script>
         </div>
 
-        <!-- ─── Live Activities ──────────────────────────────── -->
         <div class="activity-section">
             <h2>Live Activities</h2>
 
@@ -721,79 +747,57 @@ const DASHBOARD_HTML = `
     </div>
     <script>
         const output = document.getElementById('example-output');
-
-        const setOutput = (value) => {
-            output.textContent = value;
-        };
+        const setOutput = (value) => { output.textContent = value; };
 
         const runJsonRequest = async (url) => {
-            setOutput('Loading...\\n' + url);
+            setOutput('Loading...\n' + url);
             try {
                 const response = await fetch(url);
                 const contentType = response.headers.get('content-type') || '';
                 if (!contentType.includes('application/json')) {
-                    const text = await response.text();
-                    setOutput(text);
+                    setOutput(await response.text());
                     return;
                 }
-
                 const data = await response.json();
                 setOutput(JSON.stringify(data, null, 2));
             } catch (error) {
-                setOutput(JSON.stringify({
-                    error: error instanceof Error ? error.message : String(error)
-                }, null, 2));
+                setOutput(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2));
             }
         };
 
-        document.querySelectorAll('[data-endpoint]').forEach((button) => {
+        document.querySelectorAll('[data-endpoint]').forEach(button => {
             button.addEventListener('click', async () => {
                 const action = button.getAttribute('data-endpoint');
                 const manifestUrl = document.getElementById('manifest-url').value.trim();
 
                 if (action === 'manifest-debug') {
-                    if (!manifestUrl) {
-                        setOutput('Provide a manifest URL first.');
-                        return;
-                    }
-
+                    if (!manifestUrl) { setOutput('Provide a manifest URL first.'); return; }
                     const params = new URLSearchParams({ url: manifestUrl });
                     await runJsonRequest('/api/debug-manifest?' + params.toString());
                     return;
                 }
-
                 if (action === 'proxy-debug') {
-                    if (!manifestUrl) {
-                        setOutput('Provide a manifest URL first.');
-                        return;
-                    }
-
+                    if (!manifestUrl) { setOutput('Provide a manifest URL first.'); return; }
                     const params = new URLSearchParams({ url: manifestUrl, debug: '1' });
                     window.open('/?' + params.toString(), '_blank');
-                    setOutput(JSON.stringify({
-                        opened: '/?' + params.toString()
-                    }, null, 2));
+                    setOutput(JSON.stringify({ opened: '/?' + params.toString() }, null, 2));
                     return;
                 }
-
                 await runJsonRequest('/api/info');
             });
         });
     </script>
 </body>
-</html>
-`;
+</html>`;
 
 export function handleDashboard(c: any) {
     return c.html(DASHBOARD_HTML, 200, CORS_HEADERS);
 }
 
-/**
- * Beautifies uptime seconds into a human-readable string (Hh Mm Ss).
- */
+// ─── Uptime formatting ──────────────────────────────────────────────────────
 export function formatUptime(seconds: number): string {
     if (seconds < 60) return `${seconds}s`;
-    
+
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
@@ -802,13 +806,14 @@ export function formatUptime(seconds: number): string {
     if (h > 0) result += `${h}h `;
     if (m > 0 || h > 0) result += `${m}m `;
     result += `${s}s`;
-    
+
     return result.trim();
 }
 
-export function handleStatsFragment(stats: { uptime: number | string, requests: number, latency: string }) {
+// ─── Fragment handlers ─────────────────────────────────────────────────────
+export function handleStatsFragment(stats: { uptime: number | string; requests: number; latency: string }) {
     const displayUptime = typeof stats.uptime === "number" ? formatUptime(stats.uptime) : stats.uptime;
-    
+
     return `
         <div class="stat-item">
             <span class="stat-value">${stats.requests}</span>
@@ -829,37 +834,10 @@ export function handleStatusBadge(status: string) {
     return `
         <div class="status-badge" hx-get="/api/status" hx-trigger="every 5s" hx-swap="outerHTML">
             <div class="status-dot"></div>
-            Status: ${status} (Bun)
+            Status: ${escapeHtml(status)} (Bun)
         </div>
     `;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function escapeHtml(str: string): string {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-}
-
-function formatTimeAgo(timestamp: number): string {
-    const diff = Math.floor((Date.now() - timestamp) / 1000);
-    if (diff < 5) return "just now";
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
-}
-
-function statusClass(status: number): string {
-    if (status >= 500) return "status-5xx";
-    if (status >= 400) return "status-4xx";
-    if (status >= 300) return "status-3xx";
-    return "status-2xx";
-}
-
-// ─── Live Activity Fragments ─────────────────────────────────────────────────
 
 export function handleRequestsFragment(requests: RequestLogEntry[]): string {
     if (requests.length === 0) {
@@ -869,7 +847,7 @@ export function handleRequestsFragment(requests: RequestLogEntry[]): string {
     return requests.map((r) => `
         <tr>
             <td><span class="req-method">${escapeHtml(r.method)}</span></td>
-            <td class="req-url-cell" title="${escapeHtml(r.url)}">${escapeHtml(r.hostname)}${escapeHtml(r.url.replace(/^https?:\/\/[^/]+/, "").slice(0, 40))}</td>
+            <td class="req-url-cell" title="${escapeHtml(r.url)}">${escapeHtml(displayUrlSnippet(r.url))}</td>
             <td><span class="${statusClass(r.status)}">${r.status}</span></td>
             <td class="req-latency">${r.latency}ms</td>
             <td>${formatTimeAgo(r.timestamp)}</td>
@@ -912,4 +890,4 @@ export function handleDomainsFragment(domains: { hostname: string; count: number
             </div>
         </li>
     `).join("")}</ul>`;
-}
+        }
