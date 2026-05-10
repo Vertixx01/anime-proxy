@@ -1,8 +1,3 @@
-/**
- * All API endpoint registrations — existing + new.
- * Called by index.ts BEFORE the proxy catch-all.
- */
-
 import type { Hono } from "hono";
 import { CORS_HEADERS } from "./constants.js";
 import { generateHeadersOriginal, DOMAIN_GROUPS } from "./headers.js";
@@ -21,48 +16,39 @@ import { getRecentRequests, getActiveConnections, getDomainBreakdown } from "./a
 import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
 
 export function registerEndpoints(app: Hono) {
-    // ─── Dashboard ───────────────────────────────────────────────────────────────
-
     app.get("/help", handleDashboard);
-
-    // ─── Real-Time Fragments (HTMX) ─────────────────────────────────────────────
 
     app.get("/api/stats", (c) => {
         const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
         const avgLatency = getAvgLatency().toFixed(2);
-
         return c.html(handleStatsFragment({
             uptime: uptimeSeconds,
             requests: getRequestCount(),
             latency: `${avgLatency}ms`,
-        }));
+        }), 200, CORS_HEADERS);
     });
 
     app.get("/api/status", (c) => {
         const isJson = c.req.header("Accept")?.includes("application/json");
         if (isJson) {
+            const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
             return c.json({
                 status: "Online",
-                uptime: formatUptime(Math.floor((Date.now() - START_TIME) / 1000)),
+                uptime: formatUptime(uptimeSeconds),
                 latency: getRequestCount() > 0 ? getAvgLatency().toFixed(2) + "ms" : "N/A",
                 message: "FAST ASF",
             }, 200, CORS_HEADERS);
         }
-        return c.html(handleStatusBadge("FAST ASF"));
+        return c.html(handleStatusBadge("FAST ASF"), 200, CORS_HEADERS);
     });
 
-    // ─── Live Activity Fragments ─────────────────────────────────────────────────
-
-    app.get("/api/activity/requests", (c) => c.html(handleRequestsFragment(getRecentRequests())));
-    app.get("/api/activity/active", (c) => c.html(handleActiveFragment(getActiveConnections())));
-    app.get("/api/activity/domains", (c) => c.html(handleDomainsFragment(getDomainBreakdown())));
-
-    // ─── Service Info ────────────────────────────────────────────────────────────
+    app.get("/api/activity/requests", (c) => c.html(handleRequestsFragment(getRecentRequests()), 200, CORS_HEADERS));
+    app.get("/api/activity/active", (c) => c.html(handleActiveFragment(getActiveConnections()), 200, CORS_HEADERS));
+    app.get("/api/activity/domains", (c) => c.html(handleDomainsFragment(getDomainBreakdown()), 200, CORS_HEADERS));
 
     app.get("/api/info", (c) => {
         const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
         const avgLatency = getAvgLatency().toFixed(2);
-
         return c.json({
             name: "Anime Proxy",
             version: "1.3.0",
@@ -91,37 +77,28 @@ export function registerEndpoints(app: Hono) {
         }, 200, CORS_HEADERS);
     });
 
-    // ─── Preflight ───────────────────────────────────────────────────────────────
-
     app.options("*", (c) => c.body(null, 204, CORS_HEADERS));
-
-    // ─── Manifest Debugger ───────────────────────────────────────────────────────
 
     app.get("/api/debug-manifest", async (c) => {
         const targetUrlRaw = c.req.query("url");
-        if (!targetUrlRaw) {
-            return c.json({ error: "Missing url parameter" }, 400, CORS_HEADERS);
-        }
-
+        if (!targetUrlRaw) return c.json({ error: "Missing url parameter" }, 400, CORS_HEADERS);
         let targetUrl: URL;
-        try {
-            targetUrl = new URL(targetUrlRaw);
-        } catch {
-            return c.json({ error: "Invalid url parameter" }, 400, CORS_HEADERS);
-        }
+        try { targetUrl = new URL(targetUrlRaw); } catch { return c.json({ error: "Invalid url parameter" }, 400, CORS_HEADERS); }
 
         const upstreamHeaders = generateHeadersOriginal(targetUrl);
-
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         try {
             const upstream = await fetch(targetUrl.href, {
                 headers: upstreamHeaders,
                 redirect: "manual",
+                signal: controller.signal,
                 // @ts-ignore
                 tls: { rejectUnauthorized: false },
             });
+            clearTimeout(timeout);
             const contentType = upstream.headers.get("content-type") ?? "";
             const textBody = await upstream.text();
-
             return c.json({
                 upstreamUrl: targetUrl.href,
                 contentType,
@@ -129,16 +106,11 @@ export function registerEndpoints(app: Hono) {
                 ...extractManifestDebug(textBody),
             }, 200, CORS_HEADERS);
         } catch (err) {
+            clearTimeout(timeout);
             const errorMsg = err instanceof Error ? err.message : String(err);
             return c.json({ error: errorMsg }, 502, CORS_HEADERS);
         }
     });
-
-    // ═════════════════════════════════════════════════════════════════════════════
-    //  NEW ENDPOINTS
-    // ═════════════════════════════════════════════════════════════════════════════
-
-    // ─── 1. Health Check ─────────────────────────────────────────────────────────
 
     app.get("/api/health", (c) => {
         return c.json({
@@ -147,8 +119,6 @@ export function registerEndpoints(app: Hono) {
             uptime: Math.floor((Date.now() - START_TIME) / 1000),
         }, 200, CORS_HEADERS);
     });
-
-    // ─── 2. URL Encryption ───────────────────────────────────────────────────────
 
     app.post("/api/encrypt", async (c) => {
         if (!XOR_KEY) return c.json({ error: "Encryption not configured" }, 503, CORS_HEADERS);
@@ -162,8 +132,6 @@ export function registerEndpoints(app: Hono) {
             return c.json({ error: "Invalid JSON body" }, 400, CORS_HEADERS);
         }
     });
-
-    // ─── 3. Header Steering Preview ──────────────────────────────────────────────
 
     app.get("/api/headers-preview", (c) => {
         const urlParam = c.req.query("url");
@@ -181,8 +149,6 @@ export function registerEndpoints(app: Hono) {
         }
     });
 
-    // ─── 4. Domain Group Registry ────────────────────────────────────────────────
-
     app.get("/api/domains", (c) => {
         const groups = DOMAIN_GROUPS.map((g) => ({
             origin: g.origin,
@@ -193,12 +159,9 @@ export function registerEndpoints(app: Hono) {
         return c.json({ count: groups.length, groups }, 200, CORS_HEADERS);
     });
 
-    // ─── 5. Upstream Connectivity Tester ─────────────────────────────────────────
-
     app.get("/api/test-upstream", async (c) => {
         const urlParam = c.req.query("url");
         if (!urlParam) return c.json({ error: "Missing url parameter" }, 400, CORS_HEADERS);
-
         let target: URL;
         try { target = new URL(urlParam); } catch { return c.json({ error: "Invalid URL" }, 400, CORS_HEADERS); }
 
@@ -206,7 +169,6 @@ export function registerEndpoints(app: Hono) {
         const start = performance.now();
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
-
         try {
             const resp = await fetch(target.href, {
                 method: "HEAD",
@@ -217,10 +179,8 @@ export function registerEndpoints(app: Hono) {
                 tls: { rejectUnauthorized: false },
             });
             clearTimeout(timeout);
-
             const responseHeaders: Record<string, string> = {};
             for (const [k, v] of resp.headers.entries()) responseHeaders[k] = v;
-
             return c.json({
                 url: target.href,
                 reachable: true,
@@ -240,13 +200,10 @@ export function registerEndpoints(app: Hono) {
         }
     });
 
-    // ─── 6. Activity Export ──────────────────────────────────────────────────────
-
     app.get("/api/activity/export", (c) => {
         const requests = getRecentRequests();
         const domains = getDomainBreakdown(50);
         const active = getActiveConnections();
-
         return c.json({
             exportedAt: new Date().toISOString(),
             recentRequests: requests,
@@ -260,12 +217,9 @@ export function registerEndpoints(app: Hono) {
         }, 200, CORS_HEADERS);
     });
 
-    // ─── 7. Prometheus Metrics ───────────────────────────────────────────────────
-
     app.get("/api/metrics", (c) => {
         const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
         const avgLatency = getAvgLatency();
-
         const lines = [
             "# HELP proxy_requests_total Total proxy requests served",
             "# TYPE proxy_requests_total counter",
@@ -283,44 +237,46 @@ export function registerEndpoints(app: Hono) {
             "# TYPE proxy_active_connections gauge",
             `proxy_active_connections ${getActiveConnections().length}`,
         ];
-
         return c.text(lines.join("\n"), 200, {
             ...CORS_HEADERS,
             "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
         });
     });
 
-    // ─── 8. Redirect Chain Resolver ──────────────────────────────────────────────
-
     app.get("/api/resolve", async (c) => {
         const urlParam = c.req.query("url");
         if (!urlParam) return c.json({ error: "Missing url parameter" }, 400, CORS_HEADERS);
 
+        let testUrl: URL;
+        try { testUrl = new URL(urlParam); } catch { return c.json({ error: "Invalid URL" }, 400, CORS_HEADERS); }
+
         const maxHops = Math.min(parseInt(c.req.query("max") ?? "10", 10), 20);
         const chain: { url: string; status: number; location?: string }[] = [];
         let current = urlParam;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
 
         try {
             for (let i = 0; i < maxHops; i++) {
                 const target = new URL(current);
                 const headers = generateHeadersOriginal(target);
-
                 const resp = await fetch(target.href, {
                     method: "HEAD",
                     headers,
                     redirect: "manual",
+                    signal: controller.signal,
                     // @ts-ignore
                     tls: { rejectUnauthorized: false },
                 });
-
                 const location = resp.headers.get("location");
                 chain.push({ url: current, status: resp.status, location: location ?? undefined });
-
                 if (!location || resp.status < 300 || resp.status >= 400) break;
                 current = new URL(location, target).href;
             }
         } catch (err) {
             chain.push({ url: current, status: 0, location: `Error: ${err instanceof Error ? err.message : String(err)}` });
+        } finally {
+            clearTimeout(timeout);
         }
 
         return c.json({
@@ -330,4 +286,4 @@ export function registerEndpoints(app: Hono) {
             chain,
         }, 200, CORS_HEADERS);
     });
-}
+    }
