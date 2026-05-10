@@ -1,6 +1,3 @@
-// ─── Global Performance Metrics ──────────────────────────────────────────────
-// Encapsulated state with accessor functions for cross-module use.
-
 export const START_TIME = Date.now();
 
 let _requestCount = 0;
