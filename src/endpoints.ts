@@ -19,6 +19,18 @@ import {
 } from "./dashboard.js";
 import { getRecentRequests, getActiveConnections, getDomainBreakdown } from "./activity.js";
 import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
+import { getCacheStats } from "./cache.js";
+
+function formatBytes(bytes: number): string {
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return `${value.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
+}
 
 export function registerEndpoints(app: Hono) {
     // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -62,6 +74,7 @@ export function registerEndpoints(app: Hono) {
     app.get("/api/info", (c) => {
         const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
         const avgLatency = getAvgLatency().toFixed(2);
+        const cache = getCacheStats();
 
         return c.json({
             name: "Anime Proxy",
@@ -73,6 +86,18 @@ export function registerEndpoints(app: Hono) {
             runtime: "Bun",
             status: "Online",
             performance: "Extreme",
+            cache: {
+                entries: cache.entries,
+                used: formatBytes(cache.bytes),
+                max: formatBytes(cache.maxBytes),
+                maxEntry: formatBytes(cache.maxEntryBytes),
+                hitRate: `${(cache.hitRate * 100).toFixed(2)}%`,
+                hits: cache.hits,
+                misses: cache.misses,
+                bypasses: cache.bypasses,
+                segmentTtlSeconds: cache.segmentTtlSeconds,
+                manifestTtlSeconds: cache.manifestTtlSeconds,
+            },
             endpoints: {
                 proxy: { path: "/*", method: "ALL", description: "Main proxy route. Expects 'url' parameter.", status: "Operational" },
                 help: { path: "/help", method: "GET", description: "Interactive dashboard and statistics.", status: "Operational" },
@@ -265,6 +290,7 @@ export function registerEndpoints(app: Hono) {
     app.get("/api/metrics", (c) => {
         const uptimeSeconds = Math.floor((Date.now() - START_TIME) / 1000);
         const avgLatency = getAvgLatency();
+        const cache = getCacheStats();
 
         const lines = [
             "# HELP proxy_requests_total Total proxy requests served",
@@ -282,6 +308,34 @@ export function registerEndpoints(app: Hono) {
             "# HELP proxy_active_connections Current in-flight proxy requests",
             "# TYPE proxy_active_connections gauge",
             `proxy_active_connections ${getActiveConnections().length}`,
+            "",
+            "# HELP proxy_cache_bytes Bytes currently stored in the in-process proxy cache",
+            "# TYPE proxy_cache_bytes gauge",
+            `proxy_cache_bytes ${cache.bytes}`,
+            "",
+            "# HELP proxy_cache_max_bytes Configured max bytes for the in-process proxy cache",
+            "# TYPE proxy_cache_max_bytes gauge",
+            `proxy_cache_max_bytes ${cache.maxBytes}`,
+            "",
+            "# HELP proxy_cache_entries Entries currently stored in the in-process proxy cache",
+            "# TYPE proxy_cache_entries gauge",
+            `proxy_cache_entries ${cache.entries}`,
+            "",
+            "# HELP proxy_cache_hits_total Cache hits served by the proxy",
+            "# TYPE proxy_cache_hits_total counter",
+            `proxy_cache_hits_total ${cache.hits}`,
+            "",
+            "# HELP proxy_cache_misses_total Cache misses observed by the proxy",
+            "# TYPE proxy_cache_misses_total counter",
+            `proxy_cache_misses_total ${cache.misses}`,
+            "",
+            "# HELP proxy_cache_bypasses_total Cache bypasses due to oversized or uncached responses",
+            "# TYPE proxy_cache_bypasses_total counter",
+            `proxy_cache_bypasses_total ${cache.bypasses}`,
+            "",
+            "# HELP proxy_cache_hit_rate Cache hit ratio from 0 to 1",
+            "# TYPE proxy_cache_hit_rate gauge",
+            `proxy_cache_hit_rate ${cache.hitRate.toFixed(6)}`,
         ];
 
         return c.text(lines.join("\n"), 200, {

@@ -22,11 +22,14 @@ interface CacheOptions {
 
 const DEFAULT_SEGMENT_TTL_MS = readDurationEnv("SEGMENT_CACHE_TTL_SECONDS", 24 * 60 * 60) * 1000;
 const DEFAULT_MANIFEST_TTL_MS = readDurationEnv("MANIFEST_CACHE_TTL_SECONDS", 15) * 1000;
-const DEFAULT_MAX_BYTES = readBytesEnv("PROXY_CACHE_MAX_BYTES", 512 * 1024 * 1024);
-const DEFAULT_MAX_ENTRY_BYTES = readBytesEnv("PROXY_CACHE_MAX_ENTRY_BYTES", 128 * 1024 * 1024);
+const DEFAULT_MAX_BYTES = readBytesEnv("PROXY_CACHE_MAX_BYTES", 12 * 1024 * 1024 * 1024);
+const DEFAULT_MAX_ENTRY_BYTES = readBytesEnv("PROXY_CACHE_MAX_ENTRY_BYTES", 512 * 1024 * 1024);
 
 const cache = new Map<string, ByteCacheEntry>();
 let currentBytes = 0;
+let hits = 0;
+let misses = 0;
+let bypasses = 0;
 
 function readDurationEnv(name: string, fallback: number): number {
     const raw = process.env[name];
@@ -91,12 +94,17 @@ function trimCache(maxBytes: number) {
 
 export function getByteCache(key: string): ByteCacheEntry | null {
     const entry = cache.get(key);
-    if (!entry) return null;
+    if (!entry) {
+        misses++;
+        return null;
+    }
     if (entry.expiresAt <= Date.now()) {
         deleteEntry(key, entry);
+        misses++;
         return null;
     }
     touch(key, entry);
+    hits++;
     return entry;
 }
 
@@ -182,7 +190,10 @@ export async function cacheResponseBody(
 
     const options = cacheOptions(kind, manifestText);
     const contentLength = Number(response.headers.get("content-length") ?? "0");
-    if (contentLength > options.maxEntryBytes) return null;
+    if (contentLength > options.maxEntryBytes) {
+        bypasses++;
+        return null;
+    }
 
     const body = manifestText === undefined
         ? await response.arrayBuffer()
@@ -201,6 +212,26 @@ export async function cacheResponseBody(
         headers,
         status: response.status,
     };
-    if (body.byteLength <= options.maxEntryBytes) putByteCache(key, entry, options.maxBytes);
+    if (body.byteLength <= options.maxEntryBytes) {
+        putByteCache(key, entry, options.maxBytes);
+    } else {
+        bypasses++;
+    }
     return entry;
+}
+
+export function getCacheStats() {
+    const total = hits + misses;
+    return {
+        entries: cache.size,
+        bytes: currentBytes,
+        maxBytes: DEFAULT_MAX_BYTES,
+        maxEntryBytes: DEFAULT_MAX_ENTRY_BYTES,
+        hits,
+        misses,
+        bypasses,
+        hitRate: total > 0 ? hits / total : 0,
+        segmentTtlSeconds: Math.floor(DEFAULT_SEGMENT_TTL_MS / 1000),
+        manifestTtlSeconds: Math.floor(DEFAULT_MANIFEST_TTL_MS / 1000),
+    };
 }
