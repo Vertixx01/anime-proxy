@@ -74,3 +74,4 @@ export const BLACKLIST_HEADERS = new Set([
 ]);
 
 export const MEDIA_CACHE_CONTROL = "public, max-age=31536000, s-maxage=31536000, immutable";
+export const MANIFEST_CACHE_CONTROL = "public, max-age=15, s-maxage=15, stale-while-revalidate=60";

@@ -11,12 +11,27 @@ import {
     CORS_HEADERS,
     BLACKLIST_HEADERS,
     MEDIA_CACHE_CONTROL,
+    MANIFEST_CACHE_CONTROL,
 } from "./constants.js";
 import { generateHeadersOriginal } from "./headers.js";
 import { buildProxyQuery, extractManifestDebug, processM3u8Line, resolveUrl } from "./processor.js";
 import { encryptUrl, decryptUrl, XOR_KEY } from "./crypto.js";
 import { handleDashboard, formatUptime } from "./dashboard.js";
 import { START_TIME, getRequestCount, getAvgLatency } from "./metrics.js";
+import {
+    buildCacheKey,
+    cacheResponseBody,
+    getByteCache,
+    responseFromByteCache,
+} from "./cache.js";
+
+const FULL_SEGMENT_CACHE_EXTS = new Set(["ts", "m4s", "aac", "vtt", "webm"]);
+
+function setResponseHeader(headers: Record<string, string>, name: string, value: string) {
+    delete headers[name.toLowerCase()];
+    delete headers[name];
+    headers[name] = value;
+}
 
 export function registerProxy(app: Hono) {
     app.all("*", async (c) => {
@@ -139,16 +154,8 @@ export function registerProxy(app: Hono) {
 
         const upstreamHeaders = generateHeadersOriginal(targetUrl);
 
-        // Forward Range and standard headers
         const clientHeaders = c.req.raw.headers;
         const rangeVal = clientHeaders.get("range");
-        if (rangeVal) upstreamHeaders["range"] = rangeVal;
-        const ifRangeVal = clientHeaders.get("if-range");
-        if (ifRangeVal) upstreamHeaders["if-range"] = ifRangeVal;
-        const ifNoneMatchVal = clientHeaders.get("if-none-match");
-        if (ifNoneMatchVal) upstreamHeaders["if-none-match"] = ifNoneMatchVal;
-        const ifModifiedVal = clientHeaders.get("if-modified-since");
-        if (ifModifiedVal) upstreamHeaders["if-modified-since"] = ifModifiedVal;
 
         const headersParam = c.req.query("headers");
         if (headersParam) {
@@ -162,6 +169,39 @@ export function registerProxy(app: Hono) {
                 }
             } catch { /* ignore */ }
         }
+
+        // Set cookie for relative redirection recovery (only needed for manifest/html responses, skip segments)
+        const pathname = targetUrl.pathname;
+        const dotIdx = pathname.lastIndexOf(".");
+        const ext = dotIdx !== -1 ? pathname.slice(dotIdx + 1).toLowerCase() : "";
+        const isMediaSegment = ext === "ts" || ext === "mp4" || ext === "m4s" || ext === "aac" || ext === "vtt" || ext === "webm";
+        const isManifestPath = ext === "m3u8";
+        const shouldPopulateFullSegmentCache = method === "GET" && isMediaSegment && (!rangeVal || FULL_SEGMENT_CACHE_EXTS.has(ext));
+        const shouldUseByteCache = (method === "GET" || method === "HEAD") && (isMediaSegment || isManifestPath);
+        const cacheKey = shouldUseByteCache
+            ? buildCacheKey(isMediaSegment ? "segment" : "manifest", targetUrl, upstreamHeaders, `${debugEnabled}:${Boolean(XOR_KEY)}`)
+            : "";
+
+        if (shouldUseByteCache) {
+            const cached = getByteCache(cacheKey);
+            if (cached) {
+                const cachedResponse = responseFromByteCache(cached, method, isMediaSegment ? rangeVal : null);
+                return new Response(cachedResponse.body, {
+                    status: cachedResponse.status,
+                    headers: cachedResponse.headers,
+                });
+            }
+        }
+
+        // Forward Range and standard validators only when we are not intentionally
+        // fetching the whole segment to seed the local byte cache.
+        if (rangeVal && !shouldPopulateFullSegmentCache) upstreamHeaders["range"] = rangeVal;
+        const ifRangeVal = clientHeaders.get("if-range");
+        if (ifRangeVal && !shouldPopulateFullSegmentCache) upstreamHeaders["if-range"] = ifRangeVal;
+        const ifNoneMatchVal = clientHeaders.get("if-none-match");
+        if (ifNoneMatchVal && !shouldUseByteCache) upstreamHeaders["if-none-match"] = ifNoneMatchVal;
+        const ifModifiedVal = clientHeaders.get("if-modified-since");
+        if (ifModifiedVal && !shouldUseByteCache) upstreamHeaders["if-modified-since"] = ifModifiedVal;
 
         let body: any = null;
         if (method === "POST") {
@@ -207,12 +247,6 @@ export function registerProxy(app: Hono) {
             }
         }
 
-        // Set cookie for relative redirection recovery (only needed for manifest/html responses, skip segments)
-        const pathname = targetUrl.pathname;
-        const dotIdx = pathname.lastIndexOf(".");
-        const ext = dotIdx !== -1 ? pathname.slice(dotIdx + 1).toLowerCase() : "";
-        const isMediaSegment = ext === "ts" || ext === "mp4" || ext === "m4s" || ext === "aac" || ext === "vtt" || ext === "webm";
-
         if (!isMediaSegment) {
             const urlBase = `${targetUrl.protocol}//${targetUrl.host}${pathname.substring(0, pathname.lastIndexOf("/"))}`;
             setCookie(c, "_last_requested", urlBase, { maxAge: 3600, httpOnly: true, path: "/", sameSite: "Lax" });
@@ -225,11 +259,12 @@ export function registerProxy(app: Hono) {
         }
 
         if (isMediaSegment) {
-            responseHeaders["Cache-Control"] = MEDIA_CACHE_CONTROL;
+            setResponseHeader(responseHeaders, "Cache-Control", MEDIA_CACHE_CONTROL);
+            setResponseHeader(responseHeaders, "Accept-Ranges", "bytes");
         }
 
         const contentType = upstream.headers.get("content-type") ?? "";
-        const isM3u8 = contentType.includes("mpegurl") || pathname.endsWith(".m3u8") || pathname.endsWith(".M3U8");
+        const isM3u8 = contentType.includes("mpegurl") || isManifestPath;
 
         if (isM3u8) {
             try {
@@ -259,13 +294,45 @@ export function registerProxy(app: Hono) {
                         responseHeaders["X-Proxy-Debug-Variants"] = String(debugInfo.variantCount);
                         responseHeaders["X-Proxy-Debug-Codecs"] = debugInfo.codecs.join(" | ").slice(0, 200);
                     }
-                    return c.body(rewritten, upstream.status as ContentfulStatusCode, { ...responseHeaders, "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "no-cache, no-store, must-revalidate" });
+                    const manifestHeaders = { ...responseHeaders };
+                    setResponseHeader(manifestHeaders, "Content-Type", "application/vnd.apple.mpegurl");
+                    setResponseHeader(manifestHeaders, "Cache-Control", MANIFEST_CACHE_CONTROL);
+                    if (method === "GET") {
+                        const cached = await cacheResponseBody(cacheKey || buildCacheKey("manifest", targetUrl, upstreamHeaders, `${debugEnabled}:${Boolean(XOR_KEY)}`), upstream, manifestHeaders, "manifest", rewritten);
+                        if (cached) {
+                            const cachedResponse = responseFromByteCache(cached, method, null, cached.headers["X-Proxy-Cache"]);
+                            return new Response(cachedResponse.body, {
+                                status: cachedResponse.status,
+                                headers: cachedResponse.headers,
+                            });
+                        }
+                    }
+                    if (method === "HEAD") {
+                        return c.body(null, upstream.status as ContentfulStatusCode, manifestHeaders);
+                    }
+                    return c.body(rewritten, upstream.status as ContentfulStatusCode, manifestHeaders);
                 }
                 // If it claimed to be m3u8 but isn't, return as is
                 return c.body(textBody, upstream.status as ContentfulStatusCode, responseHeaders);
             } catch (err) {
                 console.error(`[Proxy Error] M3U8 split/process failed:`, err);
                 return c.text("Manifest processing error", 500, CORS_HEADERS);
+            }
+        }
+
+        if (shouldPopulateFullSegmentCache && upstream.status === 200) {
+            try {
+                const cached = await cacheResponseBody(cacheKey, upstream, responseHeaders, "segment");
+                if (cached) {
+                    const cachedResponse = responseFromByteCache(cached, method, rangeVal, cached.headers["X-Proxy-Cache"]);
+                    return new Response(cachedResponse.body, {
+                        status: cachedResponse.status,
+                        headers: cachedResponse.headers,
+                    });
+                }
+            } catch (err) {
+                console.error(`[Proxy Error] Segment cache failed:`, err);
+                return c.body(upstream.body as ReadableStream, upstream.status as ContentfulStatusCode, responseHeaders);
             }
         }
 
